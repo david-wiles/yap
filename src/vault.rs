@@ -70,8 +70,7 @@ fn default_vault_path() -> Result<PathBuf> {
 #[cfg(test)]
 mod test {
     use std::path::Path;
-    use crate::{error, vault};
-    use crate::vault::SimpleVault;
+    use crate::vault;
 
     #[test]
     fn create_and_load_simple_vault() {

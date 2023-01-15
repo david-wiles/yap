@@ -3,7 +3,7 @@ pub mod config;
 pub mod vault;
 
 mod global;
-// mod crypto;
+mod crypto;
 
 use std::path::Path;
 

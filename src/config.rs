@@ -146,7 +146,7 @@ impl ExecutableCommand for ConfigCommand {
 
 #[cfg(test)]
 mod test {
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use crate::global::CONFIG_FILE;
     use crate::config::{Configuration, SettingKey};
 

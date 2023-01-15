@@ -1,52 +1,79 @@
 use std::num::NonZeroU32;
+use std::result;
 
-use ring::aead::{BoundKey, Nonce, NonceSequence, NONCE_LEN, SealingKey, UnboundKey, AES_256_GCM, Aad};
+use ring::aead::{BoundKey, Nonce, NonceSequence, NONCE_LEN, SealingKey, UnboundKey, AES_256_GCM, Aad, OpeningKey};
 use ring::pbkdf2::{derive, PBKDF2_HMAC_SHA256};
-use ring::rand::{SecureRandom, SystemRandom};
+use ring::rand::{Random, SecureRandom, SystemRandom};
 
 use crate::{Error, Result};
 
 pub trait Engine {
-    fn encrypt_bytes(&self, bytes: &mut [u8]) -> Result<&[u8]>;
-    fn decrypt_bytes(&self, bytes: &[u8]) -> Result<&[u8]>;
+    fn encrypt_bytes(&self, bytes: &[u8]) -> Result<Vec<u8>>;
+    fn decrypt_bytes(&self, bytes: &[u8]) -> Result<Vec<u8>>;
 }
 
-struct RandomNonceSequence {}
+struct OneNonceSequence(Option<Nonce>);
 
-impl NonceSequence for RandomNonceSequence {
-    fn advance(&mut self) -> Result<Nonce, ring::error::Unspecified> {
-        let mut nonce_buf = [0u8; NONCE_LEN];
-        SystemRandom::new().fill(&mut nonce_buf)?;
-        Ok(Nonce::try_assume_unique_for_key(&nonce_buf)?)
+impl OneNonceSequence {
+    fn new(nonce: Nonce) -> Self {
+        Self(Some(nonce))
     }
 }
 
-pub struct Aes256Engine<'a> {
-    key: &'a [u8]
-}
-
-impl<'a> Aes256Engine<'a> {
-    pub fn new(key: &'a [u8]) -> Aes256Engine {
-        Aes256Engine { key }
+impl NonceSequence for OneNonceSequence {
+    fn advance(&mut self) -> result::Result<Nonce, ring::error::Unspecified> {
+        self.0.take().ok_or(ring::error::Unspecified)
     }
 }
 
-impl<'a> Engine for Aes256Engine<'a> {
-    fn encrypt_bytes(&self, payload: &mut [u8]) -> Result<&[u8]> {
-        let mut sealing_key = SealingKey::new(UnboundKey::new(&AES_256_GCM, self.key)?, RandomNonceSequence{});
+fn next_nonce_bytes() -> Result<[u8; NONCE_LEN]> {
+    let mut nonce_buf = [0u8; NONCE_LEN];
+    SystemRandom::new().fill(&mut nonce_buf)?;
+    Ok(nonce_buf)
+}
 
-        sealing_key.seal_in_place_append_tag(Aad::empty(), payload)?;
+pub struct Aes256GcmEngine {
+    key: [u8; 32],
+}
 
-        Ok(payload)
-    }
-
-    fn decrypt_bytes(&self, bytes: &[u8]) -> Result<&[u8]> {
-        todo!()
+impl Aes256GcmEngine {
+    pub fn new(pass: String) -> Result<Aes256GcmEngine> {
+        Ok(Aes256GcmEngine { key: derive_key_from_pass(pass)? })
     }
 }
 
-pub fn derive_key_from_pass<'a>(pass: String) -> Result<&'a [u8]> {
-    let mut key = [0u8, 32];
+impl Engine for Aes256GcmEngine {
+    fn encrypt_bytes(&self, payload: &[u8]) -> Result<Vec<u8>> {
+        let nonce_bytes = next_nonce_bytes()?;
+        let nonce = Nonce::try_assume_unique_for_key(nonce_bytes.as_slice())?;
+
+        let mut sealing_key = SealingKey::new(UnboundKey::new(&AES_256_GCM, &self.key)?, OneNonceSequence::new(nonce));
+        let mut raw = payload.to_owned();
+        sealing_key.seal_in_place_append_tag(Aad::empty(), &mut raw)?;
+
+        // Append the nonce to the beginning of the encrypted bytes
+        let mut data = nonce_bytes.to_vec();
+        data.append(&mut raw);
+
+        Ok(data)
+    }
+
+    fn decrypt_bytes(&self, bytes: &[u8]) -> Result<Vec<u8>> {
+        // Split the incoming bytes at the nonce length
+        let (nonce_bytes, bytes) = bytes.split_at(NONCE_LEN);
+        let nonce = Nonce::try_assume_unique_for_key(nonce_bytes)?;
+
+        let mut opening_key = OpeningKey::new(UnboundKey::new(&AES_256_GCM, &self.key)?, OneNonceSequence::new(nonce));
+        let mut raw = bytes.to_owned();
+        let plaintext = opening_key.open_in_place(Aad::empty(), &mut raw)?;
+
+        // Remove tag length?
+        Ok(plaintext.to_owned())
+    }
+}
+
+pub fn derive_key_from_pass<'a>(pass: String) -> Result<[u8; 32]> {
+    let mut key = [0u8; 32];
 
     // TODO salt?
     let salt = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -54,57 +81,21 @@ pub fn derive_key_from_pass<'a>(pass: String) -> Result<&'a [u8]> {
     // Derive the key and store in `key`
     derive(PBKDF2_HMAC_SHA256, NonZeroU32::new(100000u32).unwrap(), &salt, &pass.as_bytes(), &mut key);
 
-    Ok(&key)
-}
-
-/* From ChatGPT
-use ring::{aead, error};
-use ring::pbkdf2;
-
-const KEY_LEN: usize = 32; // 256-bit key
-const SALT: &[u8] = b"my_salt"; // salt for the PBKDF2 key derivation function
-const NONCE_LEN: usize = 12; // nonce length for AES-GCM
-const TAG_LEN: usize = 16; // tag length for AES-GCM
-
-// Derive a key from a password using PBKDF2
-fn derive_key(password: &[u8]) -> Result<[u8; KEY_LEN], error::Unspecified> {
-    let mut key = [0u8; KEY_LEN];
-    pbkdf2::derive(
-        &pbkdf2::PBKDF2_HMAC_SHA256,
-        pbkdf2::Iterations(100_000),
-        SALT,
-        password,
-        &mut key,
-    );
     Ok(key)
 }
 
-// Encrypt data with a password
-fn encrypt(password: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, error::Unspecified> {
-    let key = derive_key(password)?;
-    let aead = aead::Aes256Gcm::new(aead::Aes256GcmKey::new(&key));
+#[cfg(test)]
+mod test {
+    use crate::crypto::{Aes256GcmEngine, Engine};
 
-    // Generate a random nonce
-    let mut nonce = [0u8; NONCE_LEN];
-    rand::thread_rng().fill(&mut nonce);
+    #[test]
+    fn can_encrypt_and_decrypt_bytes() {
+        let engine = Aes256GcmEngine::new("key".to_string()).unwrap();
+        let message = "some message".as_bytes();
 
-    // Encrypt the data
-    let ciphertext = aead.seal(nonce, plaintext, b"", TAG_LEN);
-    Ok(ciphertext)
+        let encrypted = engine.encrypt_bytes(message).unwrap();
+        let decrypted = engine.decrypt_bytes(encrypted.as_slice()).unwrap();
+
+        assert_eq!(message, decrypted.as_slice());
+    }
 }
-
-// Decrypt data with a password
-fn decrypt(password: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, error::Unspecified> {
-    let key = derive_key(password)?;
-    let aead = aead::Aes256Gcm::new(aead::Aes256GcmKey::new(&key));
-
-    // Extract the nonce and tag from the ciphertext
-    let nonce = &ciphertext[..NONCE_LEN];
-    let tag = &ciphertext[ciphertext.len() - TAG_LEN..];
-    let ciphertext = &ciphertext[NONCE_LEN..ciphertext.len() - TAG_LEN];
-
-    // Decrypt the data
-    let plaintext = aead.open(nonce, ciphertext, b"", tag)?;
-    Ok(plaintext)
-}
- */
