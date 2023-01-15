@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 use yap::{ExecutableCommand, ConfigCommand};
-use yap::vault::{SimpleVault, Vault};
+use yap::vault;
 
 #[derive(Parser)]
 #[command(about = "Yet Another Password Manager")]
@@ -59,7 +59,7 @@ impl ExecutableCommand for Cli {
             // Initialize the yap directory and the vaults
             Commands::Init => {
                 yap::init()?;
-                SimpleVault::create(self.store)?;
+                vault::create(self.store)?;
                 Ok("Succesfully initialized Yap!".to_string())
             }
 
@@ -71,14 +71,14 @@ impl ExecutableCommand for Cli {
 
             // Get a password
             Commands::Get { name } => {
-                let vault = SimpleVault::load(self.store)?;
+                let vault = vault::load(self.store)?;
                 let pw = vault.get_key(name.as_str())?;
                 Ok(pw)
             }
 
             // Set a password
             Commands::Set { name, value } => {
-                let mut vault = SimpleVault::load(self.store)?;
+                let mut vault = vault::load(self.store)?;
 
                 vault.set_key(name.as_str(), value)?;
 
