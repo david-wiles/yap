@@ -47,7 +47,7 @@ pub struct Configuration {
 
 impl Configuration {
     /// Sets up required files and settings in the specified directory.
-    pub(crate) fn init(p: PathBuf) -> Result<()> {
+    pub fn init(p: PathBuf) -> Result<()> {
         if !p.as_path().exists() {
             std::fs::create_dir_all(p.as_path())?;
         }
@@ -58,7 +58,7 @@ impl Configuration {
     }
 
     /// read will look for a config file in the specified directory and parse it into a Configuration
-    pub(crate) fn read(dir: PathBuf) -> Result<Configuration> {
+    pub fn read(dir: PathBuf) -> Result<Configuration> {
         let store = dir.join(CONFIG_FILE);
         let f = File::open(store.as_path())?;
 
@@ -68,10 +68,10 @@ impl Configuration {
     }
 
     /// Get the config value for the given key
-    pub fn get_key(self, key: SettingKey) -> String {
+    pub fn get_key(&self, key: SettingKey) -> &str {
         match key {
-            SettingKey::RemoteURL => self.settings.remote_url,
-            SettingKey::Session => self.settings.session
+            SettingKey::RemoteURL => self.settings.remote_url.as_str(),
+            SettingKey::Session => self.settings.session.as_str()
         }
     }
 
@@ -84,7 +84,7 @@ impl Configuration {
     }
 
     /// Saves the Configuration into the default location.
-    pub fn save(self) -> Result<()> {
+    pub fn save(&self) -> Result<()> {
         let f = File::create(self.store.as_path())?;
         Ok(serde_yaml::to_writer(f, &self.settings)?)
     }
@@ -96,7 +96,7 @@ pub fn init() -> Result<()> {
 }
 
 /// Reads a Configuration from the default directory
-pub fn read_config() -> Result<Configuration> {
+pub fn read() -> Result<Configuration> {
     Configuration::read(get_default_path()?)
 }
 
@@ -125,14 +125,14 @@ impl ExecutableCommand for ConfigCommand {
     fn execute(self) -> std::result::Result<String, String> {
         match self {
             ConfigCommand::Get { key } => {
-                let config = read_config()?;
+                let config = read()?;
                 let setting_key = SettingKey::parse(key.as_str())
                     .ok_or(String::from(Error::BadConfigKey { key }))?;
 
-                Ok(config.get_key(setting_key))
+                Ok(config.get_key(setting_key).to_string())
             }
             ConfigCommand::Set { key, value } => {
-                let mut config = read_config()?;
+                let mut config = read()?;
                 let setting_key = SettingKey::parse(key.as_str())
                     .ok_or(String::from(Error::BadConfigKey { key }))?;
 
@@ -146,51 +146,31 @@ impl ExecutableCommand for ConfigCommand {
 
 #[cfg(test)]
 mod test {
-    use crate::{config, global};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use crate::global::CONFIG_FILE;
+    use crate::config::{Configuration, SettingKey};
 
     #[test]
-    fn init_creates_config_file() {
-        let yap_test = ".yap_test";
-        let p = PathBuf::from(yap_test);
-        if !p.exists() {
-            std::fs::create_dir(p.as_path()).unwrap();
-        }
+    fn init_set_get_save_values() {
+        let yap_test = Path::new(".yap_test");
+        Configuration::init(yap_test.to_path_buf()).unwrap();
+        assert!(yap_test.join(CONFIG_FILE).exists());
 
-        config::Configuration::init(PathBuf::from(yap_test)).unwrap();
+        let mut test_config = Configuration::read(yap_test.to_path_buf()).unwrap();
 
-        assert!(p.join(global::CONFIG_FILE).exists());
+        let test_session = String::from("test session");
+        test_config.set_key(SettingKey::Session, test_session.clone());
+        assert_eq!(test_config.get_key(SettingKey::Session), test_session);
 
-        std::fs::remove_dir_all(p.as_path()).unwrap();
+        let test_url = String::from("test remote url");
+        test_config.set_key(SettingKey::RemoteURL, test_url.clone());
+        assert_eq!(test_config.get_key(SettingKey::RemoteURL), test_url);
+
+        test_config.save().unwrap();
+        let test_config = Configuration::read(yap_test.to_path_buf()).unwrap();
+        assert_eq!(test_config.get_key(SettingKey::Session), test_session);
+        assert_eq!(test_config.get_key(SettingKey::RemoteURL), test_url);
+
+        std::fs::remove_dir_all(yap_test).unwrap();
     }
-
-    #[test]
-    fn read_returns_a_configuration() {
-        let yap_test = ".yap_test";
-        let p = PathBuf::from(yap_test);
-        if !p.exists() {
-            std::fs::create_dir(p.as_path()).unwrap();
-        }
-
-        let result = config::Configuration::read(PathBuf::from(yap_test));
-
-        assert!(!result.is_err());
-
-        std::fs::remove_dir_all(p.as_path()).unwrap();
-    }
-
-    #[test]
-    fn get_key_returns_valid_value() {}
-
-    #[test]
-    fn get_key_returns_none_for_invalid_key() {}
-
-    #[test]
-    fn set_key_updates_value_for() {}
-
-    #[test]
-    fn set_key_returns_error_for_invalid_key() {}
-
-    #[test]
-    fn save_persists_values() {}
 }
