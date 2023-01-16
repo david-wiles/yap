@@ -79,9 +79,7 @@ impl ExecutableCommand for Cli {
             // Set a password
             Commands::Set { name, value } => {
                 let mut vault = vault::load(self.store)?;
-
                 vault.set_key(name.as_str(), value)?;
-
                 Ok("Successfully saved password".to_string())
             }
 
@@ -93,7 +91,7 @@ impl ExecutableCommand for Cli {
 
 fn main() {
     match Cli::parse().execute() {
-        Ok(msg) => print!("{}", msg),
+        Ok(msg) => println!("{}", msg),
         Err(msg) => eprintln!("{}", msg)
     }
 }

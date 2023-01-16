@@ -2,7 +2,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Password {name} not found in this vault")]
+    #[error("Key named {name} not found in this vault")]
     PasswordNotFound { name: String },
 
     #[error("No home directory was found, could not process request")]
@@ -11,7 +11,7 @@ pub enum Error {
     #[error("Config key {key} does not exist")]
     BadConfigKey { key: String },
 
-    #[error("Error during encryption or decryption: {0}")]
+    #[error("Cryptographic error")]
     CryptoError(#[from] ring::error::Unspecified),
 
     #[error("IO Error: {0}")]
@@ -19,6 +19,9 @@ pub enum Error {
 
     #[error("Unable to serialize or deserialize: {0}")]
     SerdeYaml(#[from] serde_yaml::Error),
+
+    #[error("Unable to parse bytes into UTF-8 string: {0}")]
+    UTF8Error(#[from] std::string::FromUtf8Error)
 }
 
 impl From<Error> for String {

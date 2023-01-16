@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use crate::{Error, Result, global};
+use crate::crypto::Aes256GcmEngine;
 
 // SimpleVault stores all passwords in separate files
 pub struct SimpleVault {
     vault_dir: PathBuf,
+    engine: Aes256GcmEngine,
 }
 
 impl SimpleVault {
@@ -15,11 +17,19 @@ impl SimpleVault {
             std::fs::create_dir(vault_dir.as_path())?;
         }
 
-        Ok(SimpleVault { vault_dir })
+        // TODO remove testing only
+        let pass = std::env::var("PASS").unwrap();
+        let engine = Aes256GcmEngine::new(pass);
+
+        Ok(SimpleVault { vault_dir, engine })
     }
 
     pub(crate) fn load(vault_dir: PathBuf) -> Result<SimpleVault> {
-        Ok(SimpleVault { vault_dir })
+        // TODO remove testing only
+        let pass = std::env::var("PASS").unwrap();
+        let engine = Aes256GcmEngine::new(pass);
+
+        Ok(SimpleVault { vault_dir, engine })
     }
 
     pub fn get_key(&self, key: &str) -> Result<String> {
@@ -27,19 +37,17 @@ impl SimpleVault {
         if !p.as_path().exists() {
             Err(Error::PasswordNotFound { name: key.to_string() })
         } else {
+            let data = std::fs::read(p.as_path())?;
+            let plaintext = self.engine.decrypt_bytes(data.as_slice())?;
 
-            // TODO decrypt
-
-            Ok(std::fs::read_to_string(p.as_path())?)
+            Ok(String::from_utf8(plaintext)?)
         }
     }
 
     pub fn set_key(&mut self, key: &str, value: String) -> Result<()> {
         let p = self.vault_dir.join(Path::new(key));
-
-        // TODO encrypt
-
-        Ok(std::fs::write(p.as_path(), value)?)
+        let ciphertext = self.engine.encrypt_bytes(value.as_bytes())?;
+        Ok(std::fs::write(p.as_path(), ciphertext)?)
     }
 }
 
@@ -74,6 +82,8 @@ mod test {
 
     #[test]
     fn create_and_load_simple_vault() {
+        // TODO remove testing
+        std::env::set_var("PASS", "asdf");
         let yap_test = String::from(".yap_test");
         std::fs::create_dir_all(Path::new(yap_test.as_str())).unwrap();
 
